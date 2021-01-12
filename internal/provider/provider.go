@@ -49,10 +49,12 @@ func New(version string) func() *schema.Provider {
 				},
 			},
 			DataSourcesMap: map[string]*schema.Resource{
-				"netcup_ccp_dns_zone":    dataSourceDnsZone(),
-				"netcup_ccp_dns_records": dataSourceDnsRecords(),
+				"netcup-ccp_dns_zone":    dataSourceDnsZone(),
+				"netcup-ccp_dns_records": dataSourceDnsRecords(),
 			},
-			ResourcesMap: map[string]*schema.Resource{},
+			ResourcesMap: map[string]*schema.Resource{
+				"netcup-ccp_dns_record": resourceDnsRecord(),
+			},
 		}
 
 		p.ConfigureContextFunc = configure(version, p)

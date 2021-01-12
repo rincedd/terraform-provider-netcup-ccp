@@ -31,7 +31,7 @@ func TestNewCCPClient(t *testing.T) {
 		client, tearDown := setupClientTest()
 		defer tearDown()
 
-		So(client.AuthData.SessionId, ShouldEqual, "SESSION_ID")
+		So(client.authData.SessionId, ShouldEqual, "SESSION_ID")
 	})
 }
 
@@ -56,6 +56,35 @@ func TestCCPClient_GetDnsZone(t *testing.T) {
 			Retry:        "7200",
 			Expire:       "1209600",
 			DNSSecStatus: true,
+		})
+	})
+}
+
+func TestCCPClient_CreateDnsRecord(t *testing.T) {
+	Convey("creates new DNS record and returns it", t, func() {
+		client, tearDown := setupClientTest()
+		defer tearDown()
+
+		gock.New(HostURL).Post("").
+			BodyString(`{"action":"updateDnsRecords","param":{"customernumber":"CUSTOMER_NUMBER","apikey":"API_KEY","apisessionid":"SESSION_ID","domainname":"domain.com","dnsrecordset":{"dnsrecords":[{"hostname":"HOSTNAME","type":"TXT","destination":"DESTINATION"}]}}}`).
+			Reply(200).Type("application/json").
+			BodyString(`{"responsedata":{"dnsrecords":[{"id":"5838738","hostname":"*","type":"A","priority":"0","destination":"1.2.3.4","deleterecord":false,"state":"yes"},{"id":"5838739","hostname":"HOSTNAME","type":"TXT","priority":"0","destination":"DESTINATION","deleterecord":false,"state":"yes"}]}}`)
+
+		newRecord, err := client.CreateDnsRecord("domain.com", NewDnsRecord{
+			Hostname:    "HOSTNAME",
+			Type:        "TXT",
+			Destination: "DESTINATION",
+		})
+
+		So(err, ShouldBeNil)
+		So(*newRecord, ShouldResemble, DnsRecord{
+			Id:           "5838739",
+			Hostname:     "HOSTNAME",
+			Type:         "TXT",
+			Priority:     "0",
+			Destination:  "DESTINATION",
+			DeleteRecord: false,
+			State:        "yes",
 		})
 	})
 }

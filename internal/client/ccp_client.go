@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -13,10 +14,10 @@ const HostURL string = "https://ccp.netcup.net/run/webservice/servers/endpoint.p
 
 type (
 	CCPClient struct {
-		HostURL    string
-		AuthData   AuthData
-		UserAgent  string
+		hostURL    string
 		httpClient http.Client
+		authData   AuthData
+		UserAgent  string
 	}
 
 	AuthData struct {
@@ -82,20 +83,42 @@ type (
 		Destination  string `json:"destination"`
 		DeleteRecord bool   `json:"deleterecord,omitempty"`
 		State        string `json:"state,omitempty"`
-		TTL          int    `json:"ttl,omitempty"`
+	}
+
+	NewDnsRecord struct {
+		Hostname    string `json:"hostname"`
+		Type        string `json:"type"`
+		Priority    string `json:"priority,omitempty"`
+		Destination string `json:"destination"`
+	}
+
+	DnsRecordSet struct {
+		DnsRecords []DnsRecord `json:"dnsrecords,omitempty"`
 	}
 
 	DnsRecordsResponse struct {
 		ResponseBody
-		ResponseData struct {
-			DnsRecords []DnsRecord `json:"dnsrecords,omitempty"`
-		} `json:"responsedata"`
+		ResponseData DnsRecordSet `json:"responsedata"`
+	}
+
+	NewDnsRecordSet struct {
+		DnsRecords []NewDnsRecord `json:"dnsrecords"`
+	}
+
+	CreateDnsRecordsRequest struct {
+		DomainInfoRequest
+		DnsRecordSet NewDnsRecordSet `json:"dnsrecordset"`
+	}
+
+	UpdateDnsRecordsRequest struct {
+		DomainInfoRequest
+		DnsRecordSet DnsRecordSet `json:"dnsrecordset"`
 	}
 )
 
 func NewCCPClient(customerNumber, apiKey, apiPassword string) (*CCPClient, error) {
 	c := CCPClient{
-		HostURL:    HostURL,
+		hostURL:    HostURL,
 		httpClient: http.Client{Timeout: 10 * time.Second},
 	}
 
@@ -120,7 +143,7 @@ func (c *CCPClient) login(customerNumber, apiKey, apiPassword string) error {
 		return err
 	}
 
-	c.AuthData = AuthData{
+	c.authData = AuthData{
 		CustomerNumber: customerNumber,
 		APIKey:         apiKey,
 		SessionId:      res.ResponseData.SessionId,
@@ -138,7 +161,7 @@ func (c *CCPClient) doRequest(action string, param interface{}) ([]byte, error) 
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", c.HostURL, strings.NewReader(string(rb)))
+	req, err := http.NewRequest("POST", c.hostURL, strings.NewReader(string(rb)))
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +188,7 @@ func (c *CCPClient) doRequest(action string, param interface{}) ([]byte, error) 
 
 func (c *CCPClient) GetDnsZone(domainName string) (*DnsZone, error) {
 	body, err := c.doRequest("infoDnsZone", DomainInfoRequest{
-		AuthData:   c.AuthData,
+		AuthData:   c.authData,
 		DomainName: domainName,
 	})
 
@@ -183,7 +206,7 @@ func (c *CCPClient) GetDnsZone(domainName string) (*DnsZone, error) {
 
 func (c *CCPClient) GetDnsRecords(domainName string) ([]DnsRecord, error) {
 	body, err := c.doRequest("infoDnsRecords", DomainInfoRequest{
-		AuthData:   c.AuthData,
+		AuthData:   c.authData,
 		DomainName: domainName,
 	})
 
@@ -198,4 +221,128 @@ func (c *CCPClient) GetDnsRecords(domainName string) ([]DnsRecord, error) {
 	}
 
 	return res.ResponseData.DnsRecords, nil
+}
+
+func (c *CCPClient) GetDnsRecordById(domainName string, id string) (*DnsRecord, error) {
+	records, err := c.GetDnsRecords(domainName)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, record := range records {
+		if record.Id == id {
+			return &record, nil
+		}
+	}
+	return nil, fmt.Errorf("could not find DNS record with ID %s for domain %s", id, domainName)
+}
+
+func (c *CCPClient) CreateDnsRecord(domainName string, record NewDnsRecord) (*DnsRecord, error) {
+	body, err := c.doRequest("updateDnsRecords", CreateDnsRecordsRequest{
+		DomainInfoRequest: DomainInfoRequest{
+			AuthData:   c.authData,
+			DomainName: domainName,
+		},
+		DnsRecordSet: NewDnsRecordSet{DnsRecords: []NewDnsRecord{record}},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	res := DnsRecordsResponse{}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		return nil, err
+	}
+
+	newRecord, err := findNewRecord(res.ResponseData.DnsRecords, record)
+	if err != nil {
+		return nil, err
+	}
+
+	return newRecord, nil
+}
+
+func (c *CCPClient) UpdateDnsRecord(domainName string, record DnsRecord) (*DnsRecord, error) {
+	body, err := c.doRequest("updateDnsRecords", UpdateDnsRecordsRequest{
+		DomainInfoRequest: DomainInfoRequest{
+			AuthData:   c.authData,
+			DomainName: domainName,
+		},
+		DnsRecordSet: DnsRecordSet{DnsRecords: []DnsRecord{record}},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	res := DnsRecordsResponse{}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		return nil, err
+	}
+
+	newRecord, err := findRecordById(res.ResponseData.DnsRecords, record.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	return newRecord, nil
+}
+
+func (c *CCPClient) DeleteDnsRecord(domainName string, record DnsRecord) error {
+	deleteRecord := record
+	deleteRecord.DeleteRecord = true
+	body, err := c.doRequest("updateDnsRecords", UpdateDnsRecordsRequest{
+		DomainInfoRequest: DomainInfoRequest{
+			AuthData:   c.authData,
+			DomainName: domainName,
+		},
+		DnsRecordSet: DnsRecordSet{DnsRecords: []DnsRecord{deleteRecord}},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	res := DnsRecordsResponse{}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		return err
+	}
+
+	_, err = findRecordById(res.ResponseData.DnsRecords, record.Id)
+	if err == nil {
+		// we expect the record to be gone from the response
+		return fmt.Errorf("failed to delete DNS record with ID %s", record.Id)
+	}
+	return nil
+}
+
+func findRecordById(records []DnsRecord, id string) (*DnsRecord, error) {
+	for _, record := range records {
+		if record.Id == id {
+			return &record, nil
+		}
+	}
+	return nil, fmt.Errorf("could not find DNS record with ID %s", id)
+}
+
+func findNewRecord(newRecords []DnsRecord, requestedRecord NewDnsRecord) (*DnsRecord, error) {
+	for _, record := range newRecords {
+		if requestedRecord.Matches(record) {
+			return &record, nil
+		}
+	}
+	return nil, errors.New("could not retrieve newly created DNS record")
+}
+
+func (r NewDnsRecord) Matches(r2 DnsRecord) bool {
+	isMatch := r.Hostname == r2.Hostname && r.Type == r2.Type && r.Destination == r2.Destination
+
+	if r.Priority != "" {
+		isMatch = isMatch && (r.Priority == r2.Priority)
+	}
+	return isMatch
 }

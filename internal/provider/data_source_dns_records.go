@@ -33,10 +33,6 @@ func dataSourceDnsRecords() *schema.Resource {
 							Type:     schema.TypeString,
 							Computed: true,
 						},
-						"ttl": {
-							Type:     schema.TypeInt,
-							Computed: true,
-						},
 						"value": {
 							Type:     schema.TypeString,
 							Computed: true,
@@ -90,7 +86,6 @@ func dataSourceDnsRecordsRead(ctx context.Context, d *schema.ResourceData, m int
 			record["id"] = dnsRecord.Id
 			record["name"] = dnsRecord.Hostname
 			record["type"] = dnsRecord.Type
-			record["ttl"] = dnsRecord.TTL
 			record["value"] = dnsRecord.Destination
 			record["priority"] = dnsRecord.Priority
 			record["state"] = dnsRecord.State
