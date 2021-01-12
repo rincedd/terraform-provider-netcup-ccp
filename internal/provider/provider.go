@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"github.com/rincedd/terraform-provider-netcup-ccp/internal/client"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -26,12 +27,32 @@ func init() {
 func New(version string) func() *schema.Provider {
 	return func() *schema.Provider {
 		p := &schema.Provider{
+			Schema: map[string]*schema.Schema{
+				"customer_number": {
+					Type:        schema.TypeString,
+					Required:    true,
+					DefaultFunc: schema.EnvDefaultFunc("NETCUP_CUSTOMER_NUMBER", nil),
+					Description: "Netcup customer number.",
+				},
+				"ccp_api_key": {
+					Type:        schema.TypeString,
+					Required:    true,
+					DefaultFunc: schema.EnvDefaultFunc("NETCUP_CCP_API_KEY", nil),
+					Description: "Netcup CCP API key.",
+				},
+				"ccp_api_password": {
+					Type:        schema.TypeString,
+					Required:    true,
+					Sensitive:   true,
+					DefaultFunc: schema.EnvDefaultFunc("NETCUP_CCP_API_PASSWORD", nil),
+					Description: "Netcup CCP API password.",
+				},
+			},
 			DataSourcesMap: map[string]*schema.Resource{
-				"scaffolding_data_source": dataSourceScaffolding(),
+				"netcup_ccp_dns_zone":    dataSourceDnsZone(),
+				"netcup_ccp_dns_records": dataSourceDnsRecords(),
 			},
-			ResourcesMap: map[string]*schema.Resource{
-				"scaffolding_resource": resourceScaffolding(),
-			},
+			ResourcesMap: map[string]*schema.Resource{},
 		}
 
 		p.ConfigureContextFunc = configure(version, p)
@@ -40,18 +61,35 @@ func New(version string) func() *schema.Provider {
 	}
 }
 
-type apiClient struct {
-	// Add whatever fields, client or connection info, etc. here
-	// you would need to setup to communicate with the upstream
-	// API.
-}
-
 func configure(version string, p *schema.Provider) func(context.Context, *schema.ResourceData) (interface{}, diag.Diagnostics) {
-	return func(context.Context, *schema.ResourceData) (interface{}, diag.Diagnostics) {
-		// Setup a User-Agent for your API client (replace the provider name for yours):
-		// userAgent := p.UserAgent("terraform-provider-scaffolding", version)
-		// TODO: myClient.UserAgent = userAgent
+	return func(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
+		customerNumber := d.Get("customer_number").(string)
+		ccpApiKey := d.Get("ccp_api_key").(string)
+		ccpApiPassword := d.Get("ccp_api_password").(string)
 
-		return &apiClient{}, nil
+		var diags diag.Diagnostics
+
+		if (customerNumber != "") && (ccpApiKey != "") && (ccpApiPassword != "") {
+			ccpClient, err := client.NewCCPClient(customerNumber, ccpApiKey, ccpApiPassword)
+			if err != nil {
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.Error,
+					Summary:  "Unable to authenticate with CCP API",
+					Detail:   "Unable to authenticate customer " + customerNumber + " with Netcup CCP API",
+				})
+				return nil, diags
+			}
+
+			userAgent := p.UserAgent("terraform-provider-netcup-ccp", version)
+			ccpClient.UserAgent = userAgent
+
+			return ccpClient, nil
+		}
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "Missing customer number/API key/API password.",
+			Detail:   "Netcup customer number, API key, and API password are required.",
+		})
+		return nil, diags
 	}
 }
